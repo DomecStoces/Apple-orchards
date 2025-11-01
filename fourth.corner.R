@@ -1,77 +1,170 @@
-# Fourth corner analysis
+# Fourth corner analysis with fuzzy traits
 library(readxl)
-library(ade4)
 library(dplyr)
+library(tidyr)
+library(ade4)
 
-# Load all sheets into a list
-fourth_corner <- lapply(c("sp", "env", "traits"), function(x) read_excel("fourth_corner.xlsx", sheet = x))
-
-# Assign names to the list elements
+# --- 1) Read -----------------------------------------------------------------
+fourth_corner <- lapply(c("sp", "env", "traits"),
+                        function(x) read_excel("fourth_corner.xlsx", sheet = x))
 names(fourth_corner) <- c("sp", "env", "traits")
 
-# Access individual sheets with the following syntax
-dim(fourth_corner$sp)     # Dimensions of 'sp' sheet
-dim(fourth_corner$env)    # Dimensions of 'env' sheet
-dim(fourth_corner$traits) # Dimensions of 'traits' sheet
-
-# Add a scaled squared altitude column to env
-fourth_corner$env <- as.data.frame(lapply(fourth_corner$env, function(x) {
-  if (is.character(x)) as.factor(x) else x
-}))
-fourth_corner$env <- fourth_corner$env %>%
-  mutate(
-    Altitude_scaled = scale(Altitude, center = TRUE, scale = TRUE)[,1],
-    Altitude_scaled2 = Altitude_scaled^2
-  )
-fourth_corner$env <- fourth_corner$env %>%
-  select(-Altitude) %>%   
-  relocate(Altitude_scaled, Altitude_scaled2, .after = Wind)
-
+# Base data.frames
+fourth_corner$sp     <- as.data.frame(fourth_corner$sp)
+fourth_corner$env    <- as.data.frame(fourth_corner$env)
 fourth_corner$traits <- as.data.frame(fourth_corner$traits)
-fourth_corner$traits$Body.size <- as.numeric(gsub(",", ".", fourth_corner$traits$Body.size))
 
-# Convert numeric categorical columns to factors
-fourth_corner$env$Exposition2 <- as.numeric(fourth_corner$env$Exposition2)
-fourth_corner$env$Altitude <- as.numeric(fourth_corner$env$Altitude)
-fourth_corner$env$Temperature <- as.numeric(fourth_corner$env$Temperature)
-fourth_corner$env$Precipitation <- as.numeric(fourth_corner$env$Precipitation)
-fourth_corner$env$Wind <- as.numeric(fourth_corner$env$Wind)
+# --- 2) Checks ---------------------------------------------------------------
+stopifnot(nrow(fourth_corner$env) == nrow(fourth_corner$sp))   # sites must match
 
+# --- 3) ENV (R) --------------------------------------------------------------
+# characters -> factors, keep numerics numeric
+fourth_corner$env[] <- lapply(fourth_corner$env, function(x) if (is.character(x)) factor(x) else x)
 
+# If Month exists, create Month_scaled then DROP Month
+if ("Month" %in% names(fourth_corner$env)) {
+  # coerce to numeric if needed
+  if (is.factor(fourth_corner$env$Month) || is.character(fourth_corner$env$Month)) {
+    suppressWarnings(fourth_corner$env$Month <- as.numeric(as.character(fourth_corner$env$Month)))
+  }
+  fourth_corner$env$Month_scaled <- as.numeric(scale(fourth_corner$env$Month))
+  fourth_corner$env$Month <- NULL                # <-- remove raw Month
+}
+
+# Coerce other numerics if they arrived as factor/char
+for (v in c("Trap")) {
+  if (v %in% names(fourth_corner$env)) {
+    if (is.factor(fourth_corner$env[[v]]) || is.character(fourth_corner$env[[v]])) {
+      suppressWarnings(fourth_corner$env[[v]] <- as.numeric(as.character(fourth_corner$env[[v]])))
+    }
+  }
+}
+if ("Treatment" %in% names(fourth_corner$env)) fourth_corner$env$Treatment <- factor(fourth_corner$env$Treatment)
+if ("Region"    %in% names(fourth_corner$env)) fourth_corner$env$Region    <- factor(fourth_corner$env$Region)
+
+# --- 4) SP (L) ---------------------------------------------------------------
 fourth_corner$sp[is.na(fourth_corner$sp)] <- 0
-fourth_corner$traits[is.na(fourth_corner$traits)] <- 0
-fourth_corner$traits_num <- fourth_corner$traits %>%
-  select(-Species) %>%
-  mutate(across(everything(), as.numeric))
-afcL.aravo <- dudi.coa(fourth_corner$sp, scannf = FALSE)
-acpR.aravo <- dudi.hillsmith(fourth_corner$env, row.w = afcL.aravo$lw,
-                             scannf = FALSE)
-acpQ.aravo <- dudi.pca(fourth_corner$traits_num, 
-                       row.w = afcL.aravo$cw, 
-                       scannf = FALSE)
-rlq.aravo <- rlq(acpR.aravo, afcL.aravo, acpQ.aravo,
-                 scannf = FALSE)
 
+# --- 5) TRAITS (Q) with fuzzy handling ---------------------------------------
+traits_raw <- fourth_corner$traits
+
+# Align rows of traits to species in sp
+sp_id_col <- intersect(names(traits_raw), c("Species","species","Taxon","taxon"))
+if (length(sp_id_col) == 1) {
+  sp_id_col <- sp_id_col[[1]]
+  rownames(traits_raw) <- make.names(traits_raw[[sp_id_col]], unique = TRUE)
+  traits_num <- traits_raw %>% select(-all_of(sp_id_col))
+} else {
+  sp_species <- colnames(fourth_corner$sp)
+  if (nrow(traits_raw) != length(sp_species)) {
+    stop("No species ID column in 'traits', and row count (traits) != species count (sp). Add a species column to 'traits'.")
+  }
+  rownames(traits_raw) <- sp_species
+  traits_num <- traits_raw
+}
+
+# Ensure numeric 0/1 (or proportions)
+traits_num[] <- lapply(traits_num, function(x) as.numeric(as.character(x)))
+traits_num[is.na(traits_num)] <- 0
+
+# ----- helpers for fuzzy handling --------------------------------------------
+# Create missing target columns if needed
+ensure_cols <- function(df, cols) {
+  missing <- setdiff(cols, colnames(df))
+  for (m in missing) df[[m]] <- 0
+  df
+}
+
+# Split a composite column 'comp' equally into two target columns 'to'
+split_composite <- function(df, comp, to) {
+  if (comp %in% colnames(df)) {
+    df <- ensure_cols(df, to)
+    w <- df[[comp]]
+    df[[to[1]]] <- df[[to[1]]] + 0.5 * w
+    df[[to[2]]] <- df[[to[2]]] + 0.5 * w
+    df[[comp]]  <- NULL
+  }
+  df
+}
+
+# Row-normalize a set of columns so rows sum to 1 (if row sum > 0)
+row_norm <- function(df, cols) {
+  ok <- intersect(cols, colnames(df))
+  if (length(ok) > 1) {
+    rs <- rowSums(df[, ok, drop = FALSE])
+    rs[rs == 0] <- 1
+    df[, ok] <- sweep(df[, ok, drop = FALSE], 1, rs, "/")
+  }
+  df
+}
+
+# ----- (1) Split overlapping composite substrate columns ----------------------
+# 'grass/herbs' -> grass + herbs
+traits_num <- split_composite(traits_num, "grass/herbs", c("grass","herbs"))
+# 'moss/lichens' -> moss + lichen
+traits_num <- split_composite(traits_num, "moss/lichens", c("moss","lichen"))
+
+# ----- (2) Fuzzy normalization within trait groups ----------------------------
+# Substrates (allow multiple-use, encode relative affinities)
+substrate_cols <- c("detritus","fruit","grass","herbs","lichen","moss","tree/shrub")
+traits_num <- ensure_cols(traits_num, substrate_cols)
+traits_num <- row_norm(traits_num, substrate_cols)
+
+# Pest effect (graded)
+pest_effect_cols <- c("none","low","direct")
+traits_num <- ensure_cols(traits_num, pest_effect_cols)
+traits_num <- row_norm(traits_num, pest_effect_cols)
+
+# Pest status (graded)
+pest_status_cols <- c("no","possibly","yes")
+traits_num <- ensure_cols(traits_num, pest_status_cols)
+traits_num <- row_norm(traits_num, pest_status_cols)
+
+# Life-stage: keep as multi-label (0/1) unless you want exclusivity
+# life_stage_cols <- c("egg","caterpillar","caterpillar/pupa","pupa","pupa / adult","adult")
+# (no normalization by default)
+
+# Save back for downstream
+fourth_corner$traits_num <- traits_num
+
+# --- 6) Align species between L and Q ----------------------------------------
+L <- fourth_corner$sp
+Q <- fourth_corner$traits_num
+R <- fourth_corner$env
+
+common <- intersect(colnames(L), rownames(Q))
+if (length(common) < 2L) stop("Very few or no overlapping species between 'sp' columns and 'traits' rows.")
+L <- L[, common, drop = FALSE]
+Q <- Q[common, , drop = FALSE]
+
+# --- 7) RLQ -------------------------------------------------------------------
+afcL  <- dudi.coa(L, scannf = FALSE)
+acpR  <- dudi.hillsmith(R, row.w = afcL$lw, scannf = FALSE)   # mixed env
+acpQ  <- dudi.pca(Q, row.w = afcL$cw, scale = TRUE, scannf = FALSE) # numeric (0/1 or fuzzy)
+
+rlq_res <- rlq(acpR, afcL, acpQ, scannf = FALSE)
+
+# --- 8) Fourth-corner ---------------------------------------------------------
 nrepet <- 999
-four.comb.aravo <- fourthcorner(fourth_corner$env, fourth_corner$sp,
-                                fourth_corner$traits_num, modeltype = 6,
-                                p.adjust.method.G = "none",
-                                p.adjust.method.D = "none", nrepet = nrepet)
+fc <- fourthcorner(
+  R, L, Q,
+  modeltype = 6,
+  p.adjust.method.G = "none",
+  p.adjust.method.D = "none",
+  nrepet = nrepet
+)
 
+plot(fc, alpha = 0.05, stat = "D2")
+plot(fc, x.rlq = rlq_res, alpha = 0.05, stat = "D2", type = "biplot")
 
-plot(four.comb.aravo, alpha = 0.05, stat = "D2")
-plot(four.comb.aravo, x.rlq = rlq.aravo, alpha = 0.05,
-     stat = "D2", type = "biplot")
+fc2 <- fourthcorner2(R, L, Q, modeltype = 6, p.adjust.method.G = "fdr", nrepet = nrepet)
+fc2$trRLQ
 
-Srlq <- fourthcorner2(fourth_corner$env, fourth_corner$sp,
-                      fourth_corner$traits,
-                      modeltype = 6, p.adjust.method.G = "fdr", nrepet = nrepet)
-Srlq$trRLQ
-
-tiff('table.tiff', units="in", width=8, height=10, res=600)
-plot(four.comb.aravo, alpha = 0.05, stat = "D2")
+# --- 9) Save figures ----------------------------------------------------------
+tiff("table.tiff", units = "in", width = 8, height = 10, res = 600)
+plot(fc, alpha = 0.05, stat = "D2")
 dev.off()
 
-pdf('table.pdf', width=8, height=10)
-plot(four.comb.aravo, alpha = 0.05, stat = "D2")
+pdf("table.pdf", width = 8, height = 10)
+plot(fc, alpha = 0.05, stat = "D2")
 dev.off()
