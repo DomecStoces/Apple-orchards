@@ -168,3 +168,18 @@ dev.off()
 pdf("table.pdf", width = 8, height = 10)
 plot(fc, alpha = 0.05, stat = "D2")
 dev.off()
+
+# second-order test (RLQ-based)
+fc2 <- fourthcorner2(R, L, Q, modeltype = 6, p.adjust.method.G = "none", nrepet = 999)
+
+par(mfrow = c(1, 2), mar = c(4,4,2,1))
+
+# Plot for fourthcorner2 -> must use stat = "G"
+plot(fc2,
+     alpha = 0.05,
+     type  = "biplot",
+     stat  = "G",
+     main  = "Trait–Environment (fourthcorner2, G)")
+par(mfrow = c(1, 2), mar = c(4,4,2,1))
+plot(fc2, alpha=0.05, type="biplot", stat="G",  main="fourthcorner2 (G)")
+plot(fc,  alpha=0.05, type="biplot", stat="D2", main="fourthcorner (D2)")
