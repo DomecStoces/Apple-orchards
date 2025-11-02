@@ -154,16 +154,6 @@ grep("^lichen", names(traits_num), value = TRUE)  # should return just "lichen"
 rs <- rowSums(traits_num[, egg_cols, drop = FALSE])
 summary(rs[rs > 0])  # ~1 (allow tiny rounding error)
 # ----- (2) Fuzzy normalization within trait groups ----------------------------
-# Pest effect (graded)
-pest_effect_cols <- c("none","low","direct")
-traits_num <- ensure_cols(traits_num, pest_effect_cols)
-traits_num <- row_norm(traits_num, pest_effect_cols)
-
-# Pest status (graded)
-pest_status_cols <- c("no","possibly","yes")
-traits_num <- ensure_cols(traits_num, pest_status_cols)
-traits_num <- row_norm(traits_num, pest_status_cols)
-
 # Life-stage: keep as multi-label (0/1) unless you want exclusivity
 # life_stage_cols <- c("egg","caterpillar","caterpillar/pupa","pupa","pupa / adult","adult")
 # (no normalization by default)
