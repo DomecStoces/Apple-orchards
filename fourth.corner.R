@@ -15,7 +15,7 @@ fourth_corner$env    <- as.data.frame(fourth_corner$env)
 fourth_corner$traits <- as.data.frame(fourth_corner$traits)
 
 # --- 2) Checks ---------------------------------------------------------------
-stopifnot(nrow(fourth_corner$env) == nrow(fourth_corner$sp))   # sites must match
+stopifnot(nrow(fourth_corner$env) == nrow(fourth_corner$sp))
 
 # --- 3) ENV (R) --------------------------------------------------------------
 # characters -> factors, keep numerics numeric
