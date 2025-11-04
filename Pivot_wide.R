@@ -79,3 +79,49 @@ writexl::write_xlsx(
   ),
   path = "Sady_final_with_traits.xlsx"
 )
+
+# Add hylogenetic relationship to long format
+library(readxl)
+library(dplyr)
+library(stringr)
+library(janitor)
+library(writexl)
+library(janitor)
+
+# --- 1) Load and standardize column names
+sady <- read_excel("Sady_final.xlsx")   |> clean_names()   # -> species, number, lokalita, t1, t2, ...
+taxa <- read_excel("Fylogeneze.xlsx")  |> clean_names()    # -> name, tribus_subfamily, family
+
+# --- 2) Make the join key the same in both tables
+sady <- sady |> mutate(species = str_squish(species))
+
+taxa <- taxa |>
+  rename(
+    species = name,
+    tribe   = tribus_subfamily,
+    family  = family
+  ) |>
+  mutate(species = str_squish(species))
+
+# --- 3) Fix decimals read with commas (only if those columns exist)
+num_cols <- c("t1","t2","t3","moisture","grass","herbs","shrubs")
+present   <- intersect(num_cols, names(sady))
+if (length(present)) {
+  sady <- sady |>
+    mutate(across(all_of(present),
+                  ~ suppressWarnings(as.numeric(str_replace(as.character(.), ",", ".")))))
+}
+
+# --- 4) Join taxonomy into every row of the long table
+sady_tax <- left_join(sady, taxa, by = "species")
+
+# --- 5) Check what didn’t match (typos / missing taxonomy)
+not_matched <- anti_join(sady, taxa, by = "species") |> distinct(species)
+print(not_matched)
+
+# --- 6) Save result (plus an 'Unmatched' sheet for quick review)
+write_xlsx(
+  list(Sady_with_taxa = sady_tax,
+       Unmatched      = not_matched),
+  "Sady_final_with_taxa.xlsx"
+)
