@@ -80,7 +80,7 @@ writexl::write_xlsx(
   path = "Sady_final_with_traits.xlsx"
 )
 
-# Add hylogenetic relationship to long format
+# Add phylogenetic relationship to long format
 library(readxl)
 library(dplyr)
 library(stringr)
@@ -125,3 +125,58 @@ write_xlsx(
        Unmatched      = not_matched),
   "Sady_final_with_taxa.xlsx"
 )
+
+# Join beta diversity components to Sady_final
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(readxl)
+library/writexl)
+
+clean_key <- function(x) {
+  x <- gsub("\\p{Pd}", "-", x, perl = TRUE)
+  x <- trimws(x)
+  x <- gsub("\\s+", " ", x)
+  toupper(x)
+}
+
+beta_lookup <- read_excel("beta_components.xlsx", sheet = 1) %>%
+  mutate(
+    management = recode(management, "EKO" = "BIO"),
+    Component  = recode(Component,
+                        "βdiversity" = "beta_diversity",
+                        "Turnover"   = "turnover",
+                        "Nestedness" = "nestedness"),
+    # normalize keys
+    Locality   = clean_key(Locality),
+    management = clean_key(management)
+  ) %>%
+  # fix the Locality prefix for BIO sites (EKO-xxx -> BIO-xxx)
+  mutate(Locality = ifelse(management == "BIO",
+                           sub("^EKO-", "BIO-", Locality),
+                           Locality)) %>%
+  arrange(Locality, management, Component, ID) %>%
+  distinct(Locality, management, Component, .keep_all = TRUE) %>%
+  select(Locality, management, Component, Distance) %>%
+  pivot_wider(names_from = Component, values_from = Distance) %>%
+  distinct(Locality, management, .keep_all = TRUE)
+
+Sady_joined <- Sady_final %>%
+  mutate(
+    lokalita  = clean_key(lokalita),
+    treatment = clean_key(treatment)
+  ) %>%
+  left_join(beta_lookup, by = c("lokalita" = "Locality", "treatment" = "management"))
+
+# Recheck missing (should now be zero)
+Sady_joined %>%
+  distinct(lokalita, treatment, beta_diversity, turnover, nestedness) %>%
+  filter(is.na(beta_diversity) & is.na(turnover) & is.na(nestedness))
+
+Sady_final2 <- Sady_joined %>%
+  group_by(lokalita, treatment) %>%
+  mutate(across(c(beta_diversity, nestedness, turnover),
+                ~ if (all(is.na(.))) NA_real_ else rep(na.omit(.)[1], dplyr::n()))) %>%
+  ungroup()
+# 5) Save to Excel
+write_xlsx(Sady_final2, "Sady_final_with_beta.xlsx")
