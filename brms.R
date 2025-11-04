@@ -41,13 +41,12 @@ Sady_final2 %>%
 write_xlsx(Sady_final2, "Sady_final_with_beta.xlsx")
 
 # Pseudo-phylogenetic tree
-# --- packages ---
 library(dplyr)
 library(tidyr)
 library(ape)      
 library(brms)
 # ========== 1) Build a clean taxonomy table ==========
-df <- Sady_final2
+df<-read_excel("Sady_final_with_beta.xlsx", sheet = 1)
 
 # Derive Species as the full binomial (already in df$species)
 # Keep only required taxonomic columns
@@ -135,14 +134,12 @@ df_mod <- df %>%
   )
 stopifnot(all(levels(df_mod$Species) == rownames(vcv_mat)))
 
-set.seed(123)
 mod1 <- brm(
-  formula = bf(beta_diversity ~ treatment + (1|Month) + (1 | gr(Species, cov = vcv_mat)) + (1 | region)),
-  data    = df_mod,
-  data2   = list(vcv_mat = vcv_mat),
-  family  = Beta(),
+  bf(beta_diversity ~ treatment + (1|Month) + (1|gr(Species, cov = vcv_mat)) + (1|region)),
+  data = df_mod, data2 = list(vcv_mat = vcv_mat),
+  family = mixture(Beta(link = "logit"), Beta(link = "logit")),
   control = list(adapt_delta = 0.95),
-  chains  = 4, iter = 3000
+  chains = 4, iter = 3000, seed = 123
 )
 
 # =============== 5) Post-fit checks ===========================
