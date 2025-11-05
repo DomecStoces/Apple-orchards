@@ -129,21 +129,31 @@ df_mod <- df %>%
     Species   = factor(species, levels = rownames(vcv_mat)),
     Treatment = toupper(treatment),
     Month     = as.numeric(month),
-    Region    = factor(region),
-    Trap      = factor(trap)
+    Lokalita  = factor(lokalita)
   )
 stopifnot(all(levels(df_mod$Species) == rownames(vcv_mat)))
 
 mod1 <- brm(
-  bf(beta_diversity ~ treatment + (1|Month) + (1|gr(Species, cov = vcv_mat)) + (1|region)),
+  bf(beta_diversity ~ Treatment + (1|Month) + (1|gr(Species, cov = vcv_mat)) + (1|Lokalita)),
   data = df_mod, data2 = list(vcv_mat = vcv_mat),
-  family = mixture(Beta(link = "logit"), Beta(link = "logit")),
+  family = Beta(link="logit"),
   control = list(adapt_delta = 0.95),
   chains = 4, iter = 3000, seed = 123
 )
 
+mod2 <- brm(
+  bf(beta_diversity ~ Treatment + (1|Month) + (1|gr(Species, cov = vcv_mat)) + (1|Lokalita)),
+  data = df_mod, data2 = list(vcv_mat = vcv_mat),
+  family = gaussian(),
+  control = list(adapt_delta = 0.95),
+  chains = 4, iter = 3000, seed = 123
+)
 # =============== 5) Post-fit checks ===========================
 print(mod1)
-pp_check(mod1)
-summary(mod1)
+pp_check(mod2)
+summary(mod2)
 
+library(emmeans)
+emm <- emmeans(mod2, ~ Treatment)
+emm
+pairs(emm)
